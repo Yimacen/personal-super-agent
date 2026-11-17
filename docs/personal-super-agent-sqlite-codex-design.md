@@ -1,10 +1,14 @@
 # 个人超级助理 SQLite + Codex 轻量实现设计
 
-> 文档状态：Lightweight Baseline v0.2  
+> 文档状态：Lightweight Baseline v0.3（本地基线已实现）
 > 更新时间：2026-11-16  
 > 对应架构：[个人超级助理架构说明](./personal-super-agent-architecture.md)  
 > 角色：轻量版本实现基线  
 > 完整生产方案：[个人超级助理代码实现设计](./personal-super-agent-technical-design.md)
+
+> 实现状态：SQLite 控制面、Worker 协议、动作审批/租约/验证纵向切片已完成。
+> 实现改进、自动化测试结果和剩余生产事项见
+> [本地基线实现与验证报告](./personal-super-agent-implementation-report.md)。
 
 ## 1. 最终技术决策
 
