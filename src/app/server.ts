@@ -14,7 +14,7 @@ import {
   safeEqual,
   sha256,
 } from "../lib/canonical.js";
-import type { FeishuNotifier } from "../notifications/feishu.js";
+import type { ApprovalNotifier } from "../notifications/contracts.js";
 import {
   ControlPlane,
   type ControlPlaneLogger,
@@ -22,16 +22,18 @@ import {
 import { ControlJobScheduler } from "./scheduler.js";
 import {
   ClaimRequestSchema,
+  DingTalkDecisionSchema,
   EventRequestSchema,
   FeishuDecisionSchema,
   KillSwitchSchema,
+  RunFailureSchema,
 } from "./schemas.js";
 
 export interface ServerOptions {
   store: Store;
   config: AppConfig;
   connectors: ConnectorRegistry;
-  notifier: FeishuNotifier;
+  notifier: ApprovalNotifier;
   logger?: ControlPlaneLogger;
   startScheduler?: boolean;
 }
@@ -217,7 +219,24 @@ export async function buildServer(options: ServerOptions): Promise<BuiltServer> 
     async (request) => {
       const token = bearer(request);
       control.assertRunAccess(token, request.params.id);
-      return control.submitWorkerResult(token, request.body);
+      const threadHeader = request.headers["x-codex-thread-id"];
+      const codexThreadId =
+        typeof threadHeader === "string" ? threadHeader : undefined;
+      return control.submitWorkerResult(
+        token,
+        request.body,
+        codexThreadId,
+      );
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/internal/runs/:id/fail",
+    async (request) => {
+      const token = bearer(request);
+      control.assertRunAccess(token, request.params.id);
+      const input = RunFailureSchema.parse(request.body);
+      return control.failWorkerRun(token, input.error);
     },
   );
 
@@ -241,6 +260,33 @@ export async function buildServer(options: ServerOptions): Promise<BuiltServer> 
       decision: input.decision,
       eventId: input.eventId,
       rawHash: sha256(canonicalJson(request.body)),
+      source: "feishu",
+    });
+  });
+
+  app.post("/api/dingtalk/callback", async (request) => {
+    if (!config.dingtalkBridgeToken) {
+      throw new UnauthorizedError(
+        "DINGTALK_BRIDGE_TOKEN is required for callbacks",
+      );
+    }
+    if (!safeEqual(bearer(request), config.dingtalkBridgeToken)) {
+      throw new UnauthorizedError("Invalid DingTalk bridge token");
+    }
+    const input = DingTalkDecisionSchema.parse(request.body);
+    if (Math.abs(Date.now() - input.timestamp * 1_000) > 5 * 60_000) {
+      throw new UnauthorizedError(
+        "DingTalk callback timestamp is outside the replay window",
+      );
+    }
+    return control.decideApproval({
+      approvalId: input.approvalId,
+      actionDigest: input.actionDigest,
+      operatorRef: input.operatorRef,
+      decision: input.decision,
+      eventId: input.eventId,
+      rawHash: sha256(canonicalJson(request.body)),
+      source: "dingtalk",
     });
   });
 

@@ -2,16 +2,25 @@ import { loadConfig } from "../config.js";
 import { MemoryConnector } from "../connectors/memory.js";
 import { ConnectorRegistry } from "../connectors/registry.js";
 import { Store } from "../db/database.js";
+import { DingTalkNotifier } from "../dingtalk/dws.js";
 import { FeishuNotifier } from "../notifications/feishu.js";
+import type { ApprovalNotifier } from "../notifications/contracts.js";
 import { buildServer } from "./server.js";
 
 const config = loadConfig();
 const store = new Store(config.databasePath);
 const connectors = new ConnectorRegistry([new MemoryConnector()]);
-const notifier = new FeishuNotifier(
-  config.feishuWebhookUrl,
-  config.feishuSigningSecret,
-);
+const notifier: ApprovalNotifier =
+  config.approvalChannel === "dingtalk"
+    ? new DingTalkNotifier({
+        command: config.dingtalkDwsCommand,
+        catalogUrl: config.dingtalkCatalogUrl,
+        approverOpenId: config.dingtalkApproverOpenId,
+      })
+    : new FeishuNotifier(
+        config.feishuWebhookUrl,
+        config.feishuSigningSecret,
+      );
 const server = await buildServer({ store, config, connectors, notifier });
 
 const shutdown = async () => {

@@ -10,6 +10,9 @@
 > 实现改进、自动化测试结果和剩余生产事项见
 > [本地基线实现与验证报告](./personal-super-agent-implementation-report.md)。
 
+> 人工审批交互出口已抽象为 `ApprovalNotifier`。当前实现支持钉钉个人 A2UI 卡片
+> bridge 和飞书适配器；钉钉 bridge 不访问 SQLite，审批状态仍只由控制面写入。
+
 ## 1. 最终技术决策
 
 本版本以单用户、单主机、低并发和个人设备为主要目标，使用：

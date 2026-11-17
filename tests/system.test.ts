@@ -175,6 +175,63 @@ test("an expired worker lease creates a fresh scoped run and revokes the old tok
   assert.equal(harness.connector.getTodoStatus("inbox", "recovered"), "done");
 });
 
+test("worker execution failures are persisted immediately", async (t) => {
+  const harness = await createHarness(t);
+  await ingest(harness, {
+    subjectKey: "todo:inbox/failing-run",
+    idempotencyKey: "todo:failure:1",
+    summary: "Fail this run",
+  });
+  await harness.server.scheduler.tick();
+  const claimed = await claimWorker(harness);
+  assert.ok(claimed);
+  const response = await harness.app.inject({
+    method: "POST",
+    url: `/internal/runs/${claimed.runId}/fail`,
+    headers: { authorization: `Bearer ${claimed.runToken}` },
+    payload: { error: "codex_exec_failed" },
+  });
+  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(harness.server.control.getTask(claimed.taskId).state, "failed");
+  const job = harness.store.db
+    .prepare(`SELECT status,last_error FROM jobs WHERE id = ?`)
+    .get(claimed.jobId) as { status: string; last_error: string };
+  assert.deepEqual(job, {
+    status: "failed",
+    last_error: "codex_exec_failed",
+  });
+});
+
+test("worker result persists the Codex thread id", async (t) => {
+  const harness = await createHarness(t);
+  await ingest(harness, {
+    subjectKey: "todo:inbox/thread-persist",
+    idempotencyKey: "todo:thread:1",
+    summary: "Persist Codex thread",
+  });
+  await harness.server.scheduler.tick();
+  const claimed = await claimWorker(harness);
+  assert.ok(claimed);
+  const response = await harness.app.inject({
+    method: "POST",
+    url: `/internal/runs/${claimed.runId}/result`,
+    headers: {
+      authorization: `Bearer ${claimed.runToken}`,
+      "x-codex-thread-id": "thread_test_123",
+    },
+    payload: {
+      kind: "complete",
+      summary: "completed",
+      acceptanceChecks: [],
+    },
+  });
+  assert.equal(response.statusCode, 200, response.body);
+  const run = harness.store.db
+    .prepare(`SELECT codex_thread_id FROM agent_runs WHERE id = ?`)
+    .get(claimed.runId) as { codex_thread_id: string };
+  assert.equal(run.codex_thread_id, "thread_test_123");
+});
+
 test("reversible private write executes once and completes after read-back verification", async (t) => {
   const harness = await createHarness(t);
   harness.connector.seedTodo("inbox", "item-automatic", "open");
@@ -196,6 +253,10 @@ test("reversible private write executes once and completes after read-back verif
       (account: { accountRef: string }) => account.accountRef,
     ),
     ["todo"],
+  );
+  assert.deepEqual(
+    context.json().authorizedAccounts[0].capabilities[0].targetSchema.required,
+    ["listId", "itemId"],
   );
   await runScriptedWorker(harness, claimed);
   await runFinalCheck(harness);

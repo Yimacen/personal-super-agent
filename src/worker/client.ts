@@ -97,15 +97,20 @@ export class WorkerApiClient {
     runToken: string,
     runId: string,
     result: unknown,
+    codexThreadId?: string | null,
   ): Promise<Record<string, unknown>> {
+    const headers: Record<string, string> = {
+      authorization: `Bearer ${runToken}`,
+      "content-type": "application/json",
+    };
+    if (codexThreadId) {
+      headers["x-codex-thread-id"] = codexThreadId;
+    }
     const response = await fetch(
       `${this.config.apiBaseUrl}/internal/runs/${encodeURIComponent(runId)}/result`,
       {
         method: "POST",
-        headers: {
-          authorization: `Bearer ${runToken}`,
-          "content-type": "application/json",
-        },
+        headers,
         body: JSON.stringify(result),
         signal: AbortSignal.timeout(20_000),
       },
@@ -116,5 +121,29 @@ export class WorkerApiClient {
       );
     }
     return (await response.json()) as Record<string, unknown>;
+  }
+
+  async failRun(
+    runToken: string,
+    runId: string,
+    error: string,
+  ): Promise<void> {
+    const response = await fetch(
+      `${this.config.apiBaseUrl}/internal/runs/${encodeURIComponent(runId)}/fail`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${runToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ error }),
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failure report failed (${response.status}): ${await response.text()}`,
+      );
+    }
   }
 }

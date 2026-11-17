@@ -35,4 +35,8 @@ export class ConnectorRegistry {
     }
     return capability;
   }
+
+  list(): Connector[] {
+    return [...this.connectors.values()];
+  }
 }

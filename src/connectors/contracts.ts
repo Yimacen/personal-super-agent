@@ -13,6 +13,8 @@ export interface ConnectorCapability {
   idempotent: boolean;
   requiresApprovalByDefault: boolean;
   scopes: string[];
+  targetSchema: Record<string, unknown>;
+  parameterSchema: Record<string, unknown>;
 }
 
 export interface ConnectorManifest {

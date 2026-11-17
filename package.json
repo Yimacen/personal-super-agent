@@ -15,6 +15,7 @@
     "backup": "tsx src/db/backup-cli.ts",
     "app": "tsx src/app/main.ts",
     "worker": "tsx src/worker/main.ts",
+    "dingtalk:bridge": "tsx src/dingtalk/main.ts",
     "dev": "tsx src/app/main.ts",
     "demo": "tsx scripts/demo.ts"
   },

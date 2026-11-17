@@ -1,24 +1,13 @@
 import { createHmac } from "node:crypto";
+import type {
+  ApprovalCard,
+  ApprovalNotifier,
+  NotificationResult,
+} from "./contracts.js";
 
-export interface ApprovalCard {
-  approvalId: string;
-  actionId: string;
-  actionDigest: string;
-  title: string;
-  summary: string;
-  target: Record<string, unknown>;
-  parameters: Record<string, unknown>;
-  sideEffects: string[];
-  reversible: boolean;
-  expiresAt: string;
-}
+export class FeishuNotifier implements ApprovalNotifier {
+  readonly provider = "feishu" as const;
 
-export interface NotificationResult {
-  deliveryRef: string;
-  dryRun: boolean;
-}
-
-export class FeishuNotifier {
   constructor(
     private readonly webhookUrl: string | null,
     private readonly signingSecret: string | null,

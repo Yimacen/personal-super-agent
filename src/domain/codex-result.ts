@@ -66,80 +66,75 @@ export type CodexResult = z.infer<typeof CodexResultSchema>;
 
 export const CodexResultJsonSchema = {
   type: "object",
-  oneOf: [
-    {
-      type: "object",
-      additionalProperties: false,
-      required: ["kind", "summary", "acceptanceChecks"],
-      properties: {
-        kind: { const: "complete" },
-        summary: { type: "string", minLength: 1 },
-        acceptanceChecks: {
-          type: "array",
-          items: {
+  additionalProperties: false,
+  required: ["kind"],
+  properties: {
+    kind: {
+      type: "string",
+      enum: ["complete", "needs_data", "proposed_action", "no_action"],
+    },
+    summary: { type: "string", minLength: 1 },
+    acceptanceChecks: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["check", "passed"],
+        properties: {
+          check: { type: "string", minLength: 1 },
+          passed: { type: "boolean" },
+          evidence: { type: "string" },
+        },
+      },
+    },
+    requests: {
+      type: "array",
+      maxItems: 5,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["sourceAccountId", "capability", "query", "reason"],
+        properties: {
+          sourceAccountId: { type: "string" },
+          capability: { type: "string" },
+          query: {
             type: "object",
-            additionalProperties: false,
-            required: ["check", "passed"],
-            properties: {
-              check: { type: "string", minLength: 1 },
-              passed: { type: "boolean" },
-              evidence: { type: "string" },
-            },
+            additionalProperties: true,
           },
+          reason: { type: "string" },
         },
       },
     },
-    {
+    action: {
       type: "object",
       additionalProperties: false,
-      required: ["kind", "requests"],
+      required: [
+        "sourceAccountId",
+        "connectorId",
+        "capability",
+        "target",
+        "parameters",
+        "sideEffects",
+        "evidenceRefs",
+        "acceptanceChecks",
+      ],
       properties: {
-        kind: { const: "needs_data" },
-        requests: { type: "array" },
-      },
-    },
-    {
-      type: "object",
-      additionalProperties: false,
-      required: ["kind", "summary", "action"],
-      properties: {
-        kind: { const: "proposed_action" },
-        summary: { type: "string", minLength: 1 },
-        action: {
+        sourceAccountId: { type: "string" },
+        connectorId: { type: "string" },
+        capability: { type: "string" },
+        target: {
           type: "object",
-          additionalProperties: false,
-          required: [
-            "sourceAccountId",
-            "connectorId",
-            "capability",
-            "target",
-            "parameters",
-            "sideEffects",
-            "evidenceRefs",
-            "acceptanceChecks",
-          ],
-          properties: {
-            sourceAccountId: { type: "string" },
-            connectorId: { type: "string" },
-            capability: { type: "string" },
-            target: { type: "object" },
-            parameters: { type: "object" },
-            sideEffects: { type: "array", items: { type: "string" } },
-            evidenceRefs: { type: "array", items: { type: "string" } },
-            acceptanceChecks: { type: "array", items: { type: "string" } },
-          },
+          additionalProperties: true,
         },
+        parameters: {
+          type: "object",
+          additionalProperties: true,
+        },
+        sideEffects: { type: "array", items: { type: "string" } },
+        evidenceRefs: { type: "array", items: { type: "string" } },
+        acceptanceChecks: { type: "array", items: { type: "string" } },
       },
     },
-    {
-      type: "object",
-      additionalProperties: false,
-      required: ["kind", "summary", "reason"],
-      properties: {
-        kind: { const: "no_action" },
-        summary: { type: "string", minLength: 1 },
-        reason: { type: "string", minLength: 1 },
-      },
-    },
-  ],
+    reason: { type: "string", minLength: 1 },
+  },
 } as const;

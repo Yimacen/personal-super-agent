@@ -13,6 +13,7 @@ import { ConnectorRegistry } from "../src/connectors/registry.js";
 import { migrateDatabase, type Store } from "../src/db/database.js";
 import type { CodexResult } from "../src/domain/codex-result.js";
 import { FeishuNotifier } from "../src/notifications/feishu.js";
+import type { ApprovalNotifier } from "../src/notifications/contracts.js";
 import { prepareWorkspace } from "../src/worker/workspace.js";
 import {
   ScriptedCodexRunner,
@@ -36,10 +37,12 @@ export interface Harness {
 export async function createHarness(
   t: TestContext,
   connectorOptions: MemoryConnectorOptions = {},
+  approvalNotifier?: ApprovalNotifier,
 ): Promise<Harness> {
   const directory = await mkdtemp(join(tmpdir(), "personal-super-agent-"));
   const store = migrateDatabase(join(directory, "assistant.db"));
   const connector = new MemoryConnector(connectorOptions);
+  const notifier = approvalNotifier ?? new FeishuNotifier(null, null);
   const config: AppConfig = {
     host: "127.0.0.1",
     port: 4310,
@@ -47,8 +50,15 @@ export async function createHarness(
     workspaceRoot: join(directory, "workspaces"),
     backupDir: join(directory, "backups"),
     internalApiToken: "test-internal-token-at-least-24-chars",
+    approvalChannel: notifier.provider,
     feishuWebhookUrl: null,
     feishuSigningSecret: "test-feishu-signing-secret",
+    dingtalkDwsCommand: "dws",
+    dingtalkApproverOpenId: null,
+    dingtalkApproverUid: null,
+    dingtalkBridgeToken: "test-dingtalk-bridge-token-123456",
+    dingtalkCatalogUrl:
+      "https://dingtalk.com/card/a2ui/catalogs/public/catalog.json",
     approverRef: "owner",
     controlJobPollMs: 10,
   };
@@ -56,7 +66,7 @@ export async function createHarness(
     store,
     config,
     connectors: new ConnectorRegistry([connector]),
-    notifier: new FeishuNotifier(null, null),
+    notifier,
     logger: silentLogger,
     startScheduler: false,
   });

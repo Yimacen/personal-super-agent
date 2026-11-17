@@ -18,6 +18,40 @@ npm run app
 npm run worker
 ```
 
+### 钉钉卡片审批
+
+项目支持基于本机 `dws` 个人连接发送 A2UI 审批卡片，不需要企业机器人和公网回调地址。先在 `.env` 中设置：
+
+`dws` 是钉钉官方开源的 Workspace CLI，不随钉钉客户端内置。macOS 可安装：
+
+```bash
+npm install -g dingtalk-workspace-cli
+dws version
+```
+
+```bash
+APPROVAL_CHANNEL=dingtalk
+APPROVER_REF=owner
+DINGTALK_BRIDGE_TOKEN=replace-with-another-long-random-token
+DINGTALK_DWS_COMMAND=dws
+DINGTALK_APPROVER_UID=
+```
+
+完成 `dws` 设备登录，然后分别启动控制面、钉钉 bridge 和 Worker：
+
+```bash
+dws auth login --device
+npm run app
+npm run dingtalk:bridge
+npm run worker
+```
+
+`DINGTALK_APPROVER_OPEN_ID` 是发卡接收人，`DINGTALK_APPROVER_UID` 是回调操作人
+校验值；两项留空时会使用当前 `dws` 登录用户。当前 CLI 的卡片回调操作者字段是
+`payload.body.operatorDTO.uid`，不是旧示例中的 `openDingTalkId`。卡片按钮携带审批 ID、
+动作摘要和批准/拒绝决定；bridge 会在回调控制面前校验钉钉操作人，成功后更新卡片状态。
+bridge 应常驻运行，避免点击事件无人消费。
+
 提交一个测试事件：
 
 ```bash
@@ -34,12 +68,17 @@ curl -X POST http://127.0.0.1:4310/api/events \
   }'
 ```
 
-使用真实 Codex 前先登录，并将 Worker 模式改为 `codex`：
+Worker 默认使用非交互 Codex 执行。API 提供商可在 Codex 配置或
+`CODEX_ENV_ALLOWLIST` 指定的环境变量中设置，不要求 `codex login`：
 
 ```bash
-codex login
 WORKER_CODEX_MODE=codex npm run worker
 ```
+
+本地 Worker 使用 `codex exec` 和
+`--dangerously-bypass-approvals-and-sandbox`，因此 Codex 以完全权限静默执行，
+不会等待人工审批。控制面仍会对第三方动作执行策略、摘要、审批、租约和验证。
+启用前应确认运行账号、工作区和 API 配额可信。
 
 ## 验证
 
@@ -61,9 +100,9 @@ npm run backup
 
 - 控制面与 SQLite 只支持单主机、单写者。
 - 内置 `MemoryConnector` 用于确定性验证，尚未接入真实日历、邮件或 GitHub。
-- 飞书回调采用可测试的 HMAC 适配协议；生产接入需按实际飞书自建应用协议替换适配器。
-- 真实 Codex Runner 已实现启动检查和 CLI 调用，但本机当前未登录，因此尚未完成真实模型复验。
-- Codex 的强隔离仍需专用 OS 用户、容器或虚拟机，不能只依赖 `workspace-write`。
+- 审批出口支持钉钉 A2UI 卡片和飞书适配器；钉钉依赖本机 `dws` 登录态。
+- 飞书回调仍采用可测试的 HMAC 适配协议；生产接入需按实际飞书自建应用协议替换适配器。
+- 真实 Codex Runner 使用 `codex exec` 完全权限模式；本机隔离依赖专用 OS 用户、容器或虚拟机。
 
 ## 文档
 

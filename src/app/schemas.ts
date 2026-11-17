@@ -22,7 +22,24 @@ export const ClaimRequestSchema = z
   })
   .strict();
 
+export const RunFailureSchema = z
+  .object({
+    error: z.string().min(1).max(4_000),
+  })
+  .strict();
+
 export const FeishuDecisionSchema = z
+  .object({
+    eventId: z.string().min(1).max(300),
+    approvalId: z.string().min(1).max(200),
+    actionDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    operatorRef: z.string().min(1).max(200),
+    decision: z.enum(["approve", "deny"]),
+    timestamp: z.number().int().positive(),
+  })
+  .strict();
+
+export const DingTalkDecisionSchema = z
   .object({
     eventId: z.string().min(1).max(300),
     approvalId: z.string().min(1).max(200),

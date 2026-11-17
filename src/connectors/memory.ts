@@ -54,6 +54,23 @@ export class MemoryConnector implements Connector {
         idempotent: true,
         requiresApprovalByDefault: false,
         scopes: ["todo.write"],
+        targetSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["listId", "itemId"],
+          properties: {
+            listId: { type: "string" },
+            itemId: { type: "string" },
+          },
+        },
+        parameterSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["status"],
+          properties: {
+            status: { type: "string", enum: ["open", "done"] },
+          },
+        },
       },
       {
         id: "message.send",
@@ -62,6 +79,27 @@ export class MemoryConnector implements Connector {
         idempotent: true,
         requiresApprovalByDefault: true,
         scopes: ["message.send"],
+        targetSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["account"],
+          properties: {
+            account: { type: "string" },
+          },
+        },
+        parameterSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["to", "subject", "body"],
+          properties: {
+            to: {
+              type: "array",
+              items: { type: "string", format: "email" },
+            },
+            subject: { type: "string" },
+            body: { type: "string" },
+          },
+        },
       },
     ],
   };

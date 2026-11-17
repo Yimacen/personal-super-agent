@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { promisify } from "node:util";
 import type { WorkerConfig } from "../config.js";
 import {
@@ -177,46 +178,11 @@ export class CommandCodexRunner implements CodexRunner {
   constructor(private readonly config: WorkerConfig) {}
 
   async run(
-    _context: Record<string, unknown>,
+    context: Record<string, unknown>,
     workspace: TaskWorkspace,
   ): Promise<CodexRunOutput> {
-    const args = [
-      "exec",
-      "--json",
-      "--ephemeral",
-      "--ignore-user-config",
-      "--ignore-rules",
-      "--skip-git-repo-check",
-      "--sandbox",
-      "workspace-write",
-      "--color",
-      "never",
-      "-C",
-      workspace.root,
-      "--output-schema",
-      workspace.outputSchemaPath,
-      "--output-last-message",
-      workspace.resultPath,
-    ];
-    if (this.config.codexModel) {
-      args.push("--model", this.config.codexModel);
-    }
-    args.push(workspace.prompt);
-
-    const env: NodeJS.ProcessEnv = {};
-    for (const key of [
-      "PATH",
-      "HOME",
-      "USER",
-      "TMPDIR",
-      "LANG",
-      "LC_ALL",
-      "CODEX_HOME",
-    ]) {
-      if (process.env[key]) {
-        env[key] = process.env[key];
-      }
-    }
+    const args = buildCodexExecArgs(this.config, workspace);
+    const env = codexProcessEnv(this.config);
     const transcript = await new Promise<string>((resolve, reject) => {
       const child = spawn(this.config.codexCommand, args, {
         cwd: workspace.root,
@@ -247,7 +213,7 @@ export class CommandCodexRunner implements CodexRunner {
         if (code !== 0) {
           reject(
             new Error(
-              `Codex exited with ${code}: ${stderr.slice(-2_000)}`,
+              `Codex exited with ${code}: stdout=${stdout.slice(-2_000)} stderr=${stderr.slice(-2_000)}`,
             ),
           );
           return;
@@ -261,7 +227,9 @@ export class CommandCodexRunner implements CodexRunner {
       { mode: 0o600 },
     );
     const raw = await readWorkspaceResult(workspace);
-    const result = CodexResultSchema.parse(raw);
+    const result = CodexResultSchema.parse(
+      normalizeCodexResult(raw, context),
+    );
     const threadId =
       transcript
         .split("\n")
@@ -282,6 +250,59 @@ export class CommandCodexRunner implements CodexRunner {
   }
 }
 
+export function normalizeCodexResult(
+  raw: unknown,
+  context?: Record<string, unknown>,
+): unknown {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return raw;
+  }
+  const input = raw as Record<string, unknown>;
+  const pick = (keys: string[]): Record<string, unknown> =>
+    Object.fromEntries(
+      keys
+        .filter((key) => input[key] !== undefined)
+        .map((key) => [key, input[key]]),
+    );
+  switch (input.kind) {
+    case "complete": {
+      const result = pick(["kind", "summary", "acceptanceChecks"]);
+      addTaskSummary(result, context);
+      return result;
+    }
+    case "needs_data":
+      return pick(["kind", "requests"]);
+    case "proposed_action": {
+      const result = pick(["kind", "summary", "action"]);
+      addTaskSummary(result, context);
+      return result;
+    }
+    case "no_action": {
+      const result = pick(["kind", "summary", "reason"]);
+      addTaskSummary(result, context);
+      return result;
+    }
+    default:
+      return input;
+  }
+}
+
+function addTaskSummary(
+  result: Record<string, unknown>,
+  context?: Record<string, unknown>,
+): void {
+  if (typeof result.summary === "string" && result.summary.trim()) {
+    return;
+  }
+  const task = context?.task;
+  if (task && typeof task === "object" && "goal" in task) {
+    const goal = (task as { goal?: unknown }).goal;
+    if (typeof goal === "string" && goal.trim()) {
+      result.summary = goal;
+    }
+  }
+}
+
 export function createRunner(
   config: WorkerConfig,
 ): CodexRunner {
@@ -290,26 +311,84 @@ export function createRunner(
     : new ScriptedCodexRunner();
 }
 
+export function buildCodexExecArgs(
+  config: WorkerConfig,
+  workspace: TaskWorkspace,
+): string[] {
+  const args = [
+    "exec",
+    "--json",
+    "--ephemeral",
+    "--ignore-rules",
+    "--skip-git-repo-check",
+    "--dangerously-bypass-approvals-and-sandbox",
+    "--color",
+    "never",
+    "-C",
+    workspace.root,
+    "--output-last-message",
+    workspace.resultPath,
+  ];
+  if (config.codexModel) {
+    args.push("--model", config.codexModel);
+  }
+  args.push(workspace.prompt);
+  return args;
+}
+
 export async function preflightCodex(config: WorkerConfig): Promise<void> {
   if (config.codexMode !== "codex") {
     return;
   }
-  const env: NodeJS.ProcessEnv = {};
-  for (const key of ["PATH", "HOME", "USER", "TMPDIR", "CODEX_HOME"]) {
-    if (process.env[key]) {
-      env[key] = process.env[key];
-    }
-  }
+  const env = codexProcessEnv(config);
   try {
-    await promisify(execFile)(config.codexCommand, ["login", "status"], {
-      env,
-      timeout: 10_000,
-    });
+    const version = await promisify(execFile)(
+      config.codexCommand,
+      ["--version"],
+      {
+        env,
+        timeout: 10_000,
+      },
+    );
+    const help = await promisify(execFile)(
+      config.codexCommand,
+      ["exec", "--help"],
+      {
+        env,
+        timeout: 10_000,
+      },
+    );
+    if (!help.stdout.includes("--dangerously-bypass-approvals-and-sandbox")) {
+      throw new Error("Codex CLI does not support full-access execution");
+    }
+    if (!version.stdout.trim()) {
+      throw new Error("Codex CLI version check returned no output");
+    }
   } catch (error) {
     throw new Error(
-      `Codex is not ready. Run \"codex login\" first: ${
+      `Codex CLI is not ready: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
   }
+}
+
+function codexProcessEnv(config: WorkerConfig): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of [
+    "PATH",
+    "HOME",
+    "USER",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "CODEX_HOME",
+    ...config.codexEnvAllowlist,
+  ]) {
+    if (process.env[key]) {
+      env[key] = process.env[key];
+    }
+  }
+  env.GIT_CEILING_DIRECTORIES = dirname(config.workspaceRoot);
+  return env;
 }

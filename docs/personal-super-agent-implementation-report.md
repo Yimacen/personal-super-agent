@@ -1,7 +1,7 @@
 # 个人超级助理本地基线实现与验证报告
 
 > 验证日期：2026-11-17  
-> 实现范围：SQLite 控制面 + Codex Worker 协议 + 动作审批/租约/验证纵向切片  
+> 实现范围：SQLite 控制面 + Codex Worker 协议 + 动作审批/租约/验证纵向切片 + 钉钉 A2UI 审批卡片
 > 对应设计：
 > [架构说明](./personal-super-agent-architecture.md)、
 > [轻量实现设计](./personal-super-agent-sqlite-codex-design.md)
@@ -19,7 +19,7 @@ SQLite + Codex 的轻量方案可行，本地基线已经实现并通过自动�
 -> Codex 最终自检 -> 完成任务与审计时间线
 ```
 
-当前实现是单用户、本地优先的工程基线，不是完整生产系统。真实 Codex CLI 当前未登录；确定性 Scripted Worker 已完整验证，真实 Codex 模式会被启动前检查阻止，直到执行 `codex login`。
+当前实现是单用户、本地优先的工程基线，不是完整生产系统。真实 Codex 通过 API 配置调用 `codex exec`；本地 Worker 使用完全权限并关闭 Codex 自身审批。Scripted Worker 仍用于确定性测试。
 
 ## 2. 文档复核发现与改进
 
@@ -83,6 +83,19 @@ SQLite + Codex 的轻量方案可行，本地基线已经实现并通过自动�
 
 这不是对特定飞书租户应用配置的最终兼容声明。接入真实飞书自建应用时，需要按实际卡片回调和事件订阅协议替换签名适配器，并保留相同的领域校验与幂等边界。
 
+### 2.7 钉钉个人卡片采用 Bridge 边界
+
+钉钉个人连接使用本机 `dws` 发送 A2UI 卡片并消费 `user_card_action_triggered` 事件。该 CLI 具有登录态、长轮询和卡片更新能力，不适合直接放进 Worker，也不应让 SQLite 事务等待用户点击。
+
+实现拆分为：
+
+- `DingTalkNotifier`：由控制面的 `send_approval` Job 调用，只负责 lint 和发送卡片。
+- `DingTalkCardBridge`：独立常驻进程，校验钉钉操作人后把决定转发给控制面，再更新卡片状态。
+- `/api/dingtalk/callback`：只接受持有 `DINGTALK_BRIDGE_TOKEN` 的本地 bridge。
+- 控制面继续负责审批状态、动作摘要、租约、执行和审计，bridge 不接触 SQLite。
+
+这不改变原架构的控制面/执行面边界，只把人工交互渠道从固定飞书实现扩展成审批通道适配器。
+
 ## 3. 代码结构
 
 ```text
@@ -90,6 +103,7 @@ src/
 ├── app/          Fastify API、Zod 请求校验、控制面 Job 调度
 ├── connectors/   连接器端口、注册表和确定性内存连接器
 ├── db/           SQLite Schema、迁移、完整性检查、备份
+├── dingtalk/     DWS 客户端、A2UI 卡片、事件解析和 bridge
 ├── domain/       工作区无依赖的模型、策略、状态机和 Codex 输出 Schema
 ├── lib/          ID、规范 JSON、摘要、时间和签名工具
 ├── notifications/飞书通知适配器
@@ -126,8 +140,10 @@ src/
 | Worker/Job 租约恢复 | 已实现 | `recoverExpiredLeases()` |
 | Codex 最终自检 | 已实现 | `final_check` Run |
 | 用户可读任务时间线 | 已实现 JSON API | `/api/tasks/:id/timeline` |
+| 钉钉 A2UI 审批卡片 | 已实现，mock DWS 验证 | `src/dingtalk/` |
+| 钉钉点击回调与卡片更新 | 已实现，mock DWS 验证 | `DingTalkCardBridge` |
 | Scripted Worker | 已实现 | 不调用模型，用于确定性验证 |
-| 真实 Codex CLI Runner | 已实现，待登录复验 | `src/worker/codex-runner.ts` |
+| 真实 Codex CLI Runner | 已实现，API 非交互执行 | `src/worker/codex-runner.ts` |
 
 ## 5. 自动化验证
 
@@ -144,7 +160,7 @@ npm run demo
 
 - TypeScript 严格模式检查通过。
 - 生产构建通过。
-- 13 项自动化测试通过。
+- 21 项自动化测试通过。
 - 独立演示任务进入 `completed`，待办读回状态为 `done`。
 - 真实进程联调通过：Fastify 控制面与独立 Worker 通过 HTTP 完成初始 Run 和最终自检，任务进入 `completed`。
 
@@ -163,31 +179,43 @@ npm run demo
 11. Domain 与基础设施依赖边界。
 12. Worker 不依赖数据库、策略或审批服务。
 13. 内部接口需要控制面 Token，Run Token 只能访问绑定的 Run。
+14. 钉钉卡片发卡、错误审批人拦截、批准回调、卡片更新和重放幂等。
+15. 钉钉 bridge 回调缺少认证时被拒绝。
+16. Codex 使用非交互完全权限参数且不依赖登录预检。
+17. Codex 原始或 Markdown 围栏 JSON 可被安全提取。
+18. Codex 结果根节点扩展字段会在严格校验前归一化。
+19. Worker 执行失败会立即持久化到 Run、Job 和 Task。
+20. Codex thread ID 会随 Worker 结果持久化。
+21. 缺失的展示摘要可从任务目标安全回填。
+
+真实 Codex 已完成一次完整任务：API 配置无需登录，Codex 提议
+`todo.set_status`，控制面静默放行，连接器执行成功并读回 `status=done`，
+最终自检后任务进入 `completed`。
 
 ## 6. 仍待完成的生产事项
 
-### 6.1 真实 Codex 登录与复验
+### 6.1 真实 Codex 执行与权限边界
 
-当前 `codex login status` 返回 `Not logged in`。Worker 在 `WORKER_CODEX_MODE=codex` 下会拒绝启动，避免未认证进程领取任务。
+Worker 不依赖 `codex login status`。它可以读取现有 Codex API 配置，或通过
+`CODEX_ENV_ALLOWLIST` 获取指定提供商环境变量。
 
 完成方式：
 
 ```bash
-codex login
 WORKER_CODEX_MODE=codex npm run worker
 ```
 
-登录后应补一次真实模型 Run，确认：
+启动后应补一次真实模型 Run，确认：
 
 - `thread.started` 或 CLI 等价事件能提取线程标识。
 - 真实输出满足严格 Schema。
 - 最终自检任务不会重复提议动作。
 
-当前真实 Runner 使用固定版本的本地 Codex CLI，并通过 `--output-schema`、`--ephemeral`、`--ignore-user-config`、`--ignore-rules` 和 `workspace-write` 约束执行。设计文档推荐 SDK；若后续切换 SDK，应保持相同的 Runner 接口、环境变量白名单、工作区和 Schema 约束。由于当前使用 `--ephemeral`，任务恢复依赖持久工作区和 SQLite 事实源，而不是依赖可恢复的 Codex Thread。
+当前真实 Runner 使用固定版本的本地 Codex CLI，并通过 `--output-schema`、`--ephemeral`、`--ignore-rules` 和 `--dangerously-bypass-approvals-and-sandbox` 执行。Codex 配置必须保留，以继承 API 提供商设置。由于当前使用 `--ephemeral`，任务恢复依赖持久工作区和 SQLite 事实源，而不是依赖可恢复的 Codex Thread。
 
 ### 6.2 操作系统级隔离
 
-`workspace-write` 限制写入范围，但不能单独证明 Codex 无法读取同一 OS 用户可见的 SQLite、Vault 或用户 Home。生产部署应使用：
+完全权限模式允许 Codex 访问当前 OS 用户可见的资源。生产部署应使用：
 
 - 专用 OS 用户；
 - 容器或虚拟机；
@@ -198,9 +226,21 @@ WORKER_CODEX_MODE=codex npm run worker
 
 当前只有确定性 `MemoryConnector`。尚未接入日历、邮件、GitHub、飞书或本地设备执行，也尚未实现 `read_connector` 多轮数据请求。`needs_data` 结果会安全地暂停任务，而不是继续猜测。
 
-### 6.4 飞书生产协议
+### 6.4 审批渠道生产协议
 
-需要接入真实自建应用，完成：
+钉钉个人连接已经按 `dws` A2UI 协议实现。本机当前没有 `dws` 可执行文件，因此外部钉钉账号/客户端联调仍需在安装并登录 `dws` 的环境完成：
+
+```bash
+dws auth login --device
+APPROVAL_CHANNEL=dingtalk npm run app
+npm run dingtalk:bridge
+```
+
+验证点包括 `dws aicard lint --preflight new-card`、真实发卡返回 `bizId`、手机点击事件中
+`payload.body.operatorDTO.uid` 的操作人身份、按钮 context 中的审批 ID/动作摘要，以及卡片更新命令。
+当前 A2UI 已通过本机 `dws v1.0.68` 的 new-card 离线 lint；内部协议已通过 fake DWS 端到端测试。
+
+飞书接真实自建应用还需要完成：
 
 - 卡片交互回调验签/解密适配；
 - 用户身份映射；
@@ -214,7 +254,7 @@ WORKER_CODEX_MODE=codex npm run worker
 
 ### 6.6 尚未实现的交互与补偿能力
 
-- 飞书“修改后批准”尚未实现；当前只支持批准和拒绝，修改必须生成新动作与新摘要。
+- 钉钉/飞书“修改后批准”尚未实现；当前只支持批准和拒绝，修改必须生成新动作与新摘要。
 - 动作取消、自动补偿和人工恢复入口尚未接入 API。
 - `needs_data` 已有安全暂停边界，但尚未实现受限连接器读取循环。
 - 长期记忆、真实 Webhook 验签和 OAuth 凭据托管尚未接入。

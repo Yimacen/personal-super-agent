@@ -19,6 +19,10 @@ try {
       event: "worker_ready",
       workerId: config.workerId,
       mode: config.codexMode,
+      codexFullAccess:
+        config.codexMode === "codex"
+          ? "danger-full-access, approvals never"
+          : null,
       schemaVersion: health.schemaVersion,
     }),
   );
@@ -66,6 +70,7 @@ async function processOne(): Promise<boolean> {
       claimed.runToken,
       claimed.runId,
       output.result,
+      output.threadId,
     );
     console.info(
       JSON.stringify({
@@ -74,9 +79,31 @@ async function processOne(): Promise<boolean> {
         runId: claimed.runId,
         taskId: claimed.taskId,
         mode: config.codexMode,
+        codexFullAccess:
+          config.codexMode === "codex"
+            ? "danger-full-access, approvals never"
+            : null,
         threadId: output.threadId,
       }),
     );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await client.failRun(claimed.runToken, claimed.runId, message).catch(
+      (reportError) => {
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: "run_failure_report_failed",
+            runId: claimed.runId,
+            error:
+              reportError instanceof Error
+                ? reportError.message
+                : String(reportError),
+          }),
+        );
+      },
+    );
+    throw error;
   } finally {
     if (heartbeat) {
       clearInterval(heartbeat);

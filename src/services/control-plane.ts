@@ -38,7 +38,7 @@ import {
   randomToken,
   sha256,
 } from "../lib/canonical.js";
-import type { FeishuNotifier } from "../notifications/feishu.js";
+import type { ApprovalNotifier } from "../notifications/contracts.js";
 import {
   LOCAL_ASSISTANT_ID,
   LOCAL_USER_ID,
@@ -67,6 +67,7 @@ export interface ApprovalDecision {
   decision: "approve" | "deny";
   eventId: string;
   rawHash: string;
+  source: "feishu" | "dingtalk";
 }
 
 type RunAuth = {
@@ -98,7 +99,7 @@ export class ControlPlane {
   constructor(
     private readonly store: Store,
     private readonly connectors: ConnectorRegistry,
-    private readonly notifier: FeishuNotifier,
+    private readonly notifier: ApprovalNotifier,
     private readonly approverRef: string,
     private readonly logger: ControlPlaneLogger,
   ) {}
@@ -313,6 +314,22 @@ export class ControlPlane {
     }
   }
 
+  failWorkerRun(
+    runToken: string,
+    message: string,
+  ): { accepted: true; runId: string } {
+    const auth = this.authenticateRun(runToken);
+    if (
+      auth.run.state === "completed" ||
+      auth.run.state === "failed" ||
+      auth.run.state === "cancelled"
+    ) {
+      return { accepted: true, runId: auth.run.id };
+    }
+    this.failRun(auth, new Error(message));
+    return { accepted: true, runId: auth.run.id };
+  }
+
   getRunContext(runToken: string): Record<string, unknown> {
     const auth = this.authenticateRun(runToken);
     const taskEvents = this.store.db
@@ -419,6 +436,30 @@ export class ControlPlane {
         connectorId: account.connector_id,
         accountRef: account.account_ref,
         scopes: parseJson<string[]>(account.scopes_json),
+        capabilities: this.connectors
+          .list()
+          .filter(
+            (connector) => connector.manifest.id === account.connector_id,
+          )
+          .flatMap((connector) =>
+            connector.manifest.capabilities
+              .filter((capability) =>
+                capability.scopes.every((scope) =>
+                  parseJson<string[]>(account.scopes_json).includes(scope),
+                ),
+              )
+              .map((capability) => ({
+                id: capability.id,
+                risk: capability.risk,
+                reversible: capability.reversible,
+                idempotent: capability.idempotent,
+                requiresApprovalByDefault:
+                  capability.requiresApprovalByDefault,
+                scopes: capability.scopes,
+                targetSchema: capability.targetSchema,
+                parameterSchema: capability.parameterSchema,
+              })),
+          ),
       })),
       codexThreadId: auth.run.codex_thread_id,
       finalization,
@@ -434,8 +475,17 @@ export class ControlPlane {
   async submitWorkerResult(
     runToken: string,
     rawResult: unknown,
+    codexThreadId?: string,
   ): Promise<Record<string, unknown>> {
     const auth = this.authenticateRun(runToken);
+    if (codexThreadId) {
+      this.store.db
+        .prepare(
+          `UPDATE agent_runs SET codex_thread_id = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(codexThreadId, nowIso(), auth.run.id);
+    }
     let result: CodexResult;
     try {
       result = CodexResultSchema.parse(rawResult);
@@ -572,9 +622,9 @@ export class ControlPlane {
         .prepare(
           `INSERT OR IGNORE INTO webhook_inbox
             (source, source_event_id, raw_hash, received_at, processed_at)
-           VALUES ('feishu', ?, ?, ?, NULL)`,
+           VALUES (?, ?, ?, ?, NULL)`,
         )
-        .run(input.eventId, input.rawHash, nowIso());
+        .run(input.source, input.eventId, input.rawHash, nowIso());
       if (inbox.changes === 0) {
         return { accepted: true, duplicate: true, state: "duplicate" };
       }
@@ -1538,7 +1588,7 @@ export class ControlPlane {
       this.audit({
         userId: action.user_id,
         traceId: approval.id,
-        actor: { type: "system", id: "feishu-notifier" },
+        actor: { type: "system", id: `${this.notifier.provider}-notifier` },
         aggregateType: "approval",
         aggregateId: approval.id,
         eventType: "approval.card_sent",

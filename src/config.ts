@@ -34,8 +34,14 @@ export interface AppConfig {
   workspaceRoot: string;
   backupDir: string;
   internalApiToken: string;
+  approvalChannel: "feishu" | "dingtalk";
   feishuWebhookUrl: string | null;
   feishuSigningSecret: string | null;
+  dingtalkDwsCommand: string;
+  dingtalkApproverOpenId: string | null;
+  dingtalkApproverUid: string | null;
+  dingtalkBridgeToken: string | null;
+  dingtalkCatalogUrl: string;
   approverRef: string;
   controlJobPollMs: number;
 }
@@ -45,6 +51,12 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     required("INTERNAL_API_TOKEN");
   if (internalApiToken.length < 24) {
     throw new Error("INTERNAL_API_TOKEN must contain at least 24 characters");
+  }
+  const approvalChannel =
+    overrides.approvalChannel ??
+    (process.env.APPROVAL_CHANNEL ?? "feishu");
+  if (approvalChannel !== "feishu" && approvalChannel !== "dingtalk") {
+    throw new Error("APPROVAL_CHANNEL must be feishu or dingtalk");
   }
   return {
     host: overrides.host ?? process.env.HOST ?? "127.0.0.1",
@@ -58,15 +70,84 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     backupDir:
       overrides.backupDir ?? resolve(process.env.BACKUP_DIR ?? "./data/backups"),
     internalApiToken,
+    approvalChannel,
     feishuWebhookUrl:
       overrides.feishuWebhookUrl ??
       (process.env.FEISHU_WEBHOOK_URL || null),
     feishuSigningSecret:
       overrides.feishuSigningSecret ??
       (process.env.FEISHU_SIGNING_SECRET || null),
+    dingtalkDwsCommand:
+      overrides.dingtalkDwsCommand ??
+      process.env.DINGTALK_DWS_COMMAND ??
+      "dws",
+    dingtalkApproverOpenId:
+      overrides.dingtalkApproverOpenId ??
+      (process.env.DINGTALK_APPROVER_OPEN_ID || null),
+    dingtalkApproverUid:
+      overrides.dingtalkApproverUid ??
+      (process.env.DINGTALK_APPROVER_UID || null),
+    dingtalkBridgeToken:
+      overrides.dingtalkBridgeToken ??
+      (process.env.DINGTALK_BRIDGE_TOKEN || null),
+    dingtalkCatalogUrl:
+      overrides.dingtalkCatalogUrl ??
+      process.env.DINGTALK_CARD_CATALOG ??
+      "https://dingtalk.com/card/a2ui/catalogs/public/catalog.json",
     approverRef: overrides.approverRef ?? process.env.APPROVER_REF ?? "owner",
     controlJobPollMs:
       overrides.controlJobPollMs ?? integer("CONTROL_JOB_POLL_MS", 250),
+  };
+}
+
+export interface DingTalkBridgeConfig {
+  apiBaseUrl: string;
+  bridgeToken: string;
+  dwsCommand: string;
+  expectedOpenId: string | null;
+  expectedUid: string | null;
+  approverRef: string;
+  listenerDuration: string;
+  restartDelayMs: number;
+}
+
+export function loadDingTalkBridgeConfig(
+  overrides: Partial<DingTalkBridgeConfig> = {},
+): DingTalkBridgeConfig {
+  const bridgeToken = overrides.bridgeToken ??
+    process.env.DINGTALK_BRIDGE_TOKEN;
+  if (!bridgeToken || bridgeToken.length < 24) {
+    throw new Error(
+      "DINGTALK_BRIDGE_TOKEN must contain at least 24 characters",
+    );
+  }
+  return {
+    apiBaseUrl:
+      overrides.apiBaseUrl ??
+      process.env.DINGTALK_API_BASE_URL ??
+      `http://127.0.0.1:${process.env.PORT ?? "4310"}`,
+    bridgeToken,
+    dwsCommand:
+      overrides.dwsCommand ??
+      process.env.DINGTALK_DWS_COMMAND ??
+      "dws",
+    expectedOpenId:
+      overrides.expectedOpenId ??
+      (process.env.DINGTALK_APPROVER_OPEN_ID || null),
+    expectedUid:
+      overrides.expectedUid ??
+      (process.env.DINGTALK_APPROVER_UID || null),
+    approverRef:
+      overrides.approverRef ??
+      process.env.APPROVER_REF ??
+      "owner",
+    listenerDuration:
+      overrides.listenerDuration ??
+      process.env.DINGTALK_LISTENER_DURATION ??
+      "24h",
+    restartDelayMs:
+      overrides.restartDelayMs ??
+      integer("DINGTALK_BRIDGE_RESTART_MS", 3_000),
   };
 }
 
@@ -79,6 +160,7 @@ export interface WorkerConfig {
   codexMode: "scripted" | "codex";
   codexCommand: string;
   codexModel: string | null;
+  codexEnvAllowlist: string[];
 }
 
 export function loadWorkerConfig(
@@ -107,5 +189,11 @@ export function loadWorkerConfig(
       overrides.codexCommand ?? process.env.CODEX_COMMAND ?? "codex",
     codexModel:
       overrides.codexModel ?? process.env.CODEX_MODEL ?? null,
+    codexEnvAllowlist:
+      overrides.codexEnvAllowlist ??
+      (process.env.CODEX_ENV_ALLOWLIST ?? "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
   };
 }

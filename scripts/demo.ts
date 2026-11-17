@@ -21,8 +21,15 @@ const config: AppConfig = {
   workspaceRoot: join(directory, "workspaces"),
   backupDir: join(directory, "backups"),
   internalApiToken: "demo-internal-token-at-least-24-chars",
+  approvalChannel: "feishu",
   feishuWebhookUrl: null,
   feishuSigningSecret: "demo-feishu-signing-secret",
+  dingtalkDwsCommand: "dws",
+  dingtalkApproverOpenId: null,
+  dingtalkApproverUid: null,
+  dingtalkBridgeToken: "demo-dingtalk-bridge-token-123456",
+  dingtalkCatalogUrl:
+    "https://dingtalk.com/card/a2ui/catalogs/public/catalog.json",
   approverRef: "owner",
   controlJobPollMs: 250,
 };
